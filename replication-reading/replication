@@ -1,0 +1,4 @@
+--stop and start
+https://social.technet.microsoft.com/Forums/lync/en-US/ae017a64-03c8-497f-aede-6843330bbdb3/how-to-start-and-stop-distribution-agent-in-sql-server-2008-r2#:~:text=Options%3A%201%201.%20Right%20click%20on%20the%20subscriber,click%20on%20it%20to%20select%20option%20to%20start%2Fstop.
+--after restart brandon
+https://social.msdn.microsoft.com/Forums/sqlserver/en-US/6cf62717-cfaa-49e3-b25b-ae63147adb52/need-to-stoprestart-replication-jobsagents?forum=sqlreplication#:~:text=You%20do%20not%20need%20to%20stop%20the%20agents,prior%20to%20stopping%20the%20services%20then%20you%20can.

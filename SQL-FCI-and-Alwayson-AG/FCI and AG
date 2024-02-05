@@ -6,3 +6,11 @@ https://www.omegamadlab.com/a-new-era-for-sql-server-fci-on-azure-vms/#:~:text=B
 
 How to rename the SQL Server Network Name of a failover cluster
 https://www.mssqltips.com/sqlservertip/4208/how-to-rename-the-sql-server-network-name-of-a-failover-cluster/
+
+mICROSOFT
+https://learn.microsoft.com/en-us/azure/azure-sql/virtual-machines/windows/failover-cluster-instance-distributed-network-name-dnn-configure?view=azuresql
+It says - nodes that are part of the cluster but not the FCI should be excluded from the DNN DNS name. 
+
+-- it also says the following NO multisubnetfailover=true means you can't have DNN. 
+"Update the connection string of any application connecting to the SQL Server FCI DNN, 
+and include MultiSubnetFailover=True in the connection string. If your client does not support the MultiSubnetFailover parameter, it is not compatible with a DNN."

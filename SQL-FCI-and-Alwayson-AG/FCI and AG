@@ -1,2 +1,8 @@
 BEst documentations
+A new era for SQL Server FCI on Azure VMs: 
+NO VNN but DNN, added SHARED DISK GOOD NEWS
 https://www.omegamadlab.com/a-new-era-for-sql-server-fci-on-azure-vms/#:~:text=Based%20upon%20Azure%20Disks%2C%20both%20Premium%2C%20and%20UltraSSD%2C,use%20them%20to%20host%20data%20and%20log%20files.
+
+
+How to rename the SQL Server Network Name of a failover cluster
+https://www.mssqltips.com/sqlservertip/4208/how-to-rename-the-sql-server-network-name-of-a-failover-cluster/

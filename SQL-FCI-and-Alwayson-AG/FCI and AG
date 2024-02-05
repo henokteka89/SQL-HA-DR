@@ -1,15 +1,20 @@
-BEst documentations
+Best documentations
 A new era for SQL Server FCI on Azure VMs: 
 NO VNN but DNN, added SHARED DISK GOOD NEWS
-https://www.omegamadlab.com/a-new-era-for-sql-server-fci-on-azure-vms/#:~:text=Based%20upon%20Azure%20Disks%2C%20both%20Premium%2C%20and%20UltraSSD%2C,use%20them%20to%20host%20data%20and%20log%20files.
+- https://www.omegamadlab.com/a-new-era-for-sql-server-fci-on-azure-vms/#:~:text=Based%20upon%20Azure%20Disks%2C%20both%20Premium%2C%20and%20UltraSSD%2C,use%20them%20to%20host%20data%20and%20log%20files.
 
 
 How to rename the SQL Server Network Name of a failover cluster
-https://www.mssqltips.com/sqlservertip/4208/how-to-rename-the-sql-server-network-name-of-a-failover-cluster/
+- https://www.mssqltips.com/sqlservertip/4208/how-to-rename-the-sql-server-network-name-of-a-failover-cluster/
+- https://learn.microsoft.com/en-us/sql/sql-server/failover-clusters/install/rename-a-sql-server-failover-cluster-instance?view=sql-server-ver16 
 
-mICROSOFT
-https://learn.microsoft.com/en-us/azure/azure-sql/virtual-machines/windows/failover-cluster-instance-distributed-network-name-dnn-configure?view=azuresql
+Microsoft
+- https://learn.microsoft.com/en-us/azure/azure-sql/virtual-machines/windows/failover-cluster-instance-distributed-network-name-dnn-configure?view=azuresql
 It says - nodes that are part of the cluster but not the FCI should be excluded from the DNN DNS name. 
+
+Steps to configure FCI - before configuring VNN
+-https://learn.microsoft.com/en-us/azure/azure-sql/virtual-machines/windows/failover-cluster-instance-overview?view=azuresql
+MSDTC - on the above link it says "On Azure Virtual Machines, MSDTC isn't supported for Windows Server 2016 or earlier with Clustered Shared Volumes"
 
 -- it also says the following NO multisubnetfailover=true means you can't have DNN. 
 "Update the connection string of any application connecting to the SQL Server FCI DNN, 

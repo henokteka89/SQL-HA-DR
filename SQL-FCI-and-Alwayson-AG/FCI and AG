@@ -19,3 +19,13 @@ MSDTC - on the above link it says "On Azure Virtual Machines, MSDTC isn't suppor
 -- it also says the following NO multisubnetfailover=true means you can't have DNN. 
 "Update the connection string of any application connecting to the SQL Server FCI DNN, 
 and include MultiSubnetFailover=True in the connection string. If your client does not support the MultiSubnetFailover parameter, it is not compatible with a DNN."
+
+
+check this too on steps
+https://bobcares.com/blog/fci-sql-server-azure/#:~:text=Installation%20%26%20Configuration%20FCI%20with%20SQL%20Server%20on,Also%20set%20up%20the%20WSFC%20Nodes.%20More%20items
+
+adding disk and create cluster
+
+https://learn.microsoft.com/en-us/azure/azure-sql/virtual-machines/windows/failover-cluster-instance-azure-shared-disks-manually-configure?view=azuresql
+
+https://learn.microsoft.com/en-us/azure/azure-sql/virtual-machines/windows/availability-group-manually-configure-tutorial-single-subnet?view=azuresql#create-the-cluster

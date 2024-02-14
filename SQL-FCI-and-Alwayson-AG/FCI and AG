@@ -29,3 +29,8 @@ adding disk and create cluster
 https://learn.microsoft.com/en-us/azure/azure-sql/virtual-machines/windows/failover-cluster-instance-azure-shared-disks-manually-configure?view=azuresql
 
 https://learn.microsoft.com/en-us/azure/azure-sql/virtual-machines/windows/availability-group-manually-configure-tutorial-single-subnet?view=azuresql#create-the-cluster
+
+
+-- add==
+https://www.cloudcorner.gr/microsoft/azure/azure-failover-cluster-with-shared-disk-step-by-step/ Azure Failover Cluster with Shared Disk
+https://www.omegamadlab.com/sql-server-high-availability-solutions-on-azure-vms/ SQL Server High Availability Solutions on Azure VMs

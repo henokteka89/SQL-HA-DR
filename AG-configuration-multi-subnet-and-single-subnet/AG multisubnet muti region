@@ -1,0 +1,5 @@
+Configure an availability group in multiple subnets (SQL Server on Azure VMs)
+- https://learn.microsoft.com/en-us/azure/azure-sql/virtual-machines/windows/availability-group-manually-configure-tutorial-multi-subnet?view=azuresql
+https://learn.microsoft.com/en-us/azure/azure-sql/virtual-machines/windows/availability-group-manually-configure-prerequisites-tutorial-multi-subnet?view=azuresql#add-secondary-ips-to-sql-server-vms (full steps on Multisubnet)
+https://learn.microsoft.com/en-us/azure/azure-sql/virtual-machines/windows/availability-group-manually-configure-multi-subnet-multiple-regions?view=azuresql (for multi-region subnet)
+* Here it says the VMs should have secondary IP address (in Azure).

@@ -1,0 +1,113 @@
+By Henok Teka
+Steps
+If previously created, cleanup cluster with
+Get-Cluster -Name SQLFCIDNSVNN | Remove-Cluster -Force -CleanupAD 
+
+Same subnet 10.4.1.0/24
+1.	Created VMs with ip, dns and changed the dynamic ip to static
+2.	Registered the DC ip with DNS
+(I added the HA nodes’ IPs to DC DNS, but this is not needed when I recreate later. It even caused a problem and showed lots of ip for dns server when I check with ipconfig /all). The Ip of the DC is in DC’s DNS (I could be wrong.)
+3.	Used powershell command to create cluster
+New-Cluster -Name oltpprod -Node FCINODE1, FCINODE2 -StaticAddress 10.4.1.9 -NoStorage -AdministrativeAccessPoint ActiveDirectoryAndDns -ManagementPointNetworkType Singleton 
+ 
+4.	Added shared disks in the portal
+5.	Initialize disks with GPT – from one node is enough. No further action needed – ONLY INITIALIZE.
+ 
+6.	Added the disks to the cluster
+ 
+7.	Label/format the disks (go back to nodes and “new simple volume” and give Letter)
+Before you do this put the cluster disk (shown above) “Under maintenance” otherwise it will throw error (not formatted error). Turn maintenance mode off after finishing formatting. 
+    
+8.	Create quorem
+Add the disk that is assigned as a witness disk. Add all the HA nodes   
+
+9.	Create ILB
+
+10.	Install sql
+In network name I gave “SQLFCIVNN”
+ 
+Default
+ 
+Since I added disk2 as witness quorem
+
+ 
+
+Uncheck DHCP, check ipv4 and provide IP
+ 
+The right permission
+ 
+Directories
+ 
+ 
+
+Finish the set up and ADD NODE on the second HA node.
+Check dependencies
+
+11.	Testing
+After configuring the listener, I tested without applying the VNN load balancer listner. It failed to work. 
+But after running the VNN listener creating script, it worked and I can connect from other nodes. Information ($ClusterNetworkName, $IPResourceName and $ILBIP) to be included in the listener PowerShell script can be found from the pictures below. [int]$ProbePort can be found from the load balancer. 
+Get-ClusterResource $IPResourceName | Get-ClusterParameter  --to get cluster info
+
+Configure an Azure load balancer for an AG VNN listener - SQL Server on Azure VMs | Microsoft Learn
+
+$ClusterNetworkName = "Cluster Network 1"
+$IPResourceName = "SQL IP Address 1 (SQLFCIVNN)" 
+$ILBIP = "10.4.1.25" 
+[int]$ProbePort = 59999
+
+Import-Module FailoverClusters
+
+Get-ClusterResource $IPResourceName | Set-ClusterParameter -Multiple @{"Address"="$ILBIP";"ProbePort"=$ProbePort;"SubnetMask"="255.255.255.255";"Network"="$ClusterNetworkName";"EnableDhcp"=0} 
+•	After you run the command take the listener (SQLFCIVNN) “offline” then online and make sure everything is online. 
+Get the information from cluster see below. 
+SQLFCIVNN.hgtd.com
+ 
+ 
+Run select @@servername to check 
+FOR AG, you enable always on and create AG (e.g. AGCLU), then create “client access point” another name for Listener on it, and on the AGCLU create dependency and mention the listener’s name. The create load balancer and use the same script above to use powershell. 
+
+
+
+
+Testing VNN with distributed server name
+Destroyed the previous nodes. 
+Created new cluster…steps are the same. This time it is created with Distributed server name. 
+Testing connection
+-	Without VNN listener configuration: it didn’t work as expected
+-	With VNN PowerShell script: 
+I got the same error in my new trial (after recreating the VM) before running VNN powershell 
+
+Further considerations
+MSDTC 
+Works in 2019 OS and latest, with clustered shared volume (CSV). Failover cluster instances - SQL Server on Azure VMs | Microsoft Learn
+Add-clustersharedvolume “cluster disk 4” (put the disk NAME here cluster disk 1,2, or 4 or 5..)
+Alternatively, in cluster manager DISKS – right click on the disk and click “ADD to CLUSTERED SHARED VOLUMES”
+(See video “How to create a clustered shared volume (CSV) in a server 2016 cluster”)
+To remove CSV – right click on it and remove. 
+Recent – CSV not necessary we can do it with shared disk
+
+Warning: MSDTC will need its own IP and new Load balancer for it. Look video of Adam Ryan? https://www.youtube.com/watch?v=GS12sfOdC1o&pp=ygUSY2x1c3RlciB3aXRoIG1zZHRj 
+
+________________________________________
+
+Unchecking Non participating NODE from FCI 
+Right click on the distributed server name or server name (i.e. the cluster name) and properties – Advanced Policies – Uncheck the non-participating node. 
+e.g. a third node for DR is added, make sure it is not part of the FCI role. 
+
+Assigning disks to a role? Check video from “SQL server HA and DR using FCI and AOAG by Musab Umair (SQL help line)”
+
+
+ 
+
+
+
+ 
+
+
+ 
+
+
+
+For latest version (2019) window , DNN works for FCI
+ 
+Check dependencies  

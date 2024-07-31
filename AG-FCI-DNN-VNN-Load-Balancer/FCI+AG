@@ -1,1 +1,32 @@
 https://techcommunity.microsoft.com/t5/core-infrastructure-and-security/create-a-sql-fci-with-a-tertiary-ag-replica/ba-p/1286131
+
+
+grant connect to [XXX\sqladmin] --sql service account
+ your service accounts are using domain accounts in the same domain, you can choose to grant CONNECT access for each service account on all the replica locations or you can use certificates.
+
+https://learn.microsoft.com/en-us/sql/database-engine/availability-groups/windows/troubleshoot-always-on-availability-groups-configuration-sql-server?view=sql-server-ver16
+
+https://techcommunity.microsoft.com/t5/core-infrastructure-and-security/create-a-sql-fci-with-a-tertiary-ag-replica/ba-p/1286131
+
+ 
+
+
+Back on the primary node of the clustered instance of SQL Server, run the following to refresh your DNS resolver cache: 
+
+ipconfig /flushdns 
+ 
+Use ping <host>, to ensure the host entries resolve properly. 
+ 
+Google: end point failed for FCI with DR AG node
+
+
+•	Stopped & started endpoints.
+•	Dropped & recreated endpoint with a different port no..still no luck.
+•	We are able to connect to the other server through SSMS from one server. Telnet is working fine too .(tenet <server name> <hadr port no>)
+•	Tried rebooting secondary server.
+•	Tried removing secondary replica & add it back. But it fails to join.
+
+https://learn.microsoft.com/en-us/answers/questions/645751/sql-alwayson-setup-this-secondary-replica-is-not-c
+
+https://www.mssqltips.com/sqlservertip/4667/fix-sql-server-alwayson-error-35250-failed-to-join-the-availability-group/
+

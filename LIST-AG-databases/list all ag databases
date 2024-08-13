@@ -4,8 +4,6 @@ SELECT
 FROM 
     sys.availability_groups ag
 INNER JOIN 
-    sys.availability_replicas ar ON ag.group_id = ar.group_id
-INNER JOIN 
     sys.availability_databases_cluster dbcs ON ag.group_id = dbcs.group_id
 ORDER BY 
     ag.name, dbcs.database_name;

@@ -7,3 +7,21 @@ INNER JOIN
     sys.availability_databases_cluster dbcs ON ag.group_id = dbcs.group_id
 ORDER BY 
     ag.name, dbcs.database_name;
+
+
+SELECT 
+    ag.name AS AvailabilityGroupName,
+    dbcs.database_name AS DatabaseName,
+    SUM(mf.size * 8 / 1024) AS DatabaseSizeMB
+FROM 
+    sys.availability_groups ag
+INNER JOIN 
+    sys.availability_replicas ar ON ag.group_id = ar.group_id
+INNER JOIN 
+    sys.availability_databases_cluster dbcs ON ag.group_id = dbcs.group_id
+INNER JOIN 
+    sys.master_files mf ON dbcs.database_name = mf.name AND mf.type = 0
+GROUP BY 
+    ag.name, dbcs.database_name
+ORDER BY 
+    ag.name, dbcs.database_name;

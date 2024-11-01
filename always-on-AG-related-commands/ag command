@@ -22,7 +22,7 @@ SELECT
         ELSE 'Normal'
     END AS RedoQueueStatus,
     'LogSendQueue: Size of the log that needs to be sent to the secondary replica. High values may indicate network latency issues.' AS LogSendQueueInfo,
-    'RedoQueue: Size of the log that needs to be redone on the secondary replica. High values may indicate performance issues on the secondary replica.' AS RedoQueueInfo
+    'RedoQueue: Size of the log that needs to be redone (applied) on the secondary replica. High values may indicate performance issues on the secondary replica.' AS RedoQueueInfo
 FROM 
     sys.dm_hadr_database_replica_states drs
     JOIN sys.availability_replicas ar ON drs.replica_id = ar.replica_id

@@ -1,0 +1,27 @@
+SELECT 
+    ar.replica_server_name AS Replica,
+    drs.database_id AS DatabaseID,
+    db.name AS DatabaseName,
+    drs.log_send_queue_size AS LogSendQueue,
+    drs.redo_queue_size AS RedoQueue,
+    drs.redo_rate AS RedoRate,
+    drs.synchronization_state_desc AS SyncState,
+    drs.synchronization_health_desc AS HealthStatus,
+    drs.log_send_rate AS SendRate,
+    drs.last_hardened_lsn AS LastCommittedLSN,
+    CASE 
+        WHEN drs.log_send_queue_size > 1000 THEN 'Critical'
+        WHEN drs.log_send_queue_size > 100 THEN 'Warning'
+        ELSE 'Normal'
+    END AS LogSendQueueStatus,
+    CASE 
+        WHEN drs.redo_queue_size > 1000 THEN 'Critical'
+        WHEN drs.redo_queue_size > 100 THEN 'Warning'
+        ELSE 'Normal'
+    END AS RedoQueueStatus,
+    'LogSendQueue: Size of the log that needs to be sent to the secondary replica. High values may indicate network latency issues.' AS LogSendQueueInfo,
+    'RedoQueue: Size of the log that needs to be redone on the secondary replica. High values may indicate performance issues on the secondary replica.' AS RedoQueueInfo
+FROM 
+    sys.dm_hadr_database_replica_states drs
+    JOIN sys.availability_replicas ar ON drs.replica_id = ar.replica_id
+    JOIN sys.databases db ON drs.database_id = db.database_id;

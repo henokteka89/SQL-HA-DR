@@ -1,3 +1,5 @@
+--comprehensive query with additional columns to include estimated data loss, last committed time, synchronization state, send rate, and explanations
+
 SELECT 
     ar.replica_server_name AS Replica,
     drs.database_id AS DatabaseID,

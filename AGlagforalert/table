@@ -31,4 +31,21 @@ CREATE TABLE [dbo].[AGLag](
 ) ON [PRIMARY]
 GO
 
+USE [DBAUtilization]
+GO
+
+/****** Object:  Table [dbo].[AGLagAlertHistory]    Script Date: 2/17/2025 7:45:11 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+CREATE TABLE [dbo].[AGLagAlertHistory](
+	[AlertTime] [datetime2](4) NOT NULL
+) ON [PRIMARY]
+GO
+
+
+
 

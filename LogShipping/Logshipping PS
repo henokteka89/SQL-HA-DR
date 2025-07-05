@@ -1,0 +1,32 @@
+Log Shipping Involves - Taking log backup from primary (to a shared storage) Then copy that log backup file to a secondary server (local storage) Finally restored the copied log to the database in secondary. 
+
+Can be done with taking (initializing) a full back in the same process or can be applied after restoring the full backup to a secondary instance with NORecovery or standby (No Initialization). Check which recovery mode is preffered. 
+
+
+When NoInitialization is needed:
+First, restored the full backup of a database in secondary with NORECOVERY. 
+Then Initiate the Logshipping (the below DBAtool PS helps do that)
+(Make sure there is a shared file storage that can be accessed by both instances)
+
+
+
+--- PS Script
+$logShippingConfig = @{
+    SourceSqlInstance                     = 'SVR1'                              # PrimaryInstance
+    DestinationSqlInstance                = 'SVR\TESTENV'                      # SecondaryInstance
+    Database                              = 'Logshippingtest'                    # DBname
+    BackupNetworkPath                     = '\\FileShare\Folder Name'               # Shared path accessible to both
+    BackupLocalPath                       = '\\FileShare\Folder Name'               # Local path on primary for Log backups (you can use the same shared path)
+    CopyDestinationFolder                 = 'E:\LSLocalCopy'                     # Local path on secondary for copy job
+    BackupScheduleFrequencySubdayType     = 'Minutes'
+    BackupScheduleFrequencySubdayInterval = 15
+    CopyScheduleFrequencySubdayType       = 'Minutes'
+    CopyScheduleFrequencySubdayInterval   = 15
+    RestoreScheduleFrequencySubdayType    = 'Minutes'
+    RestoreScheduleFrequencySubdayInterval= 15
+    NoInitialization                      = $true                                # Don't restore full backup
+    NoRecovery                            = $true                                # Leave database in NORECOVERY for continuous restores
+    Force                                 = $true
+}
+
+Invoke-DbaDbLogShipping @logShippingConfig

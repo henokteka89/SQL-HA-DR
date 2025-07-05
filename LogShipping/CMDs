@@ -1,7 +1,0 @@
--- To get list of LS related jobs and delete them
-SELECT 
---*
-    'EXEC msdb.dbo.sp_delete_job @job_name = N''' + sj.name + ''', @delete_unused_schedule=1;' DropStatement
-FROM msdb.dbo.sysjobs sj
-WHERE sj.name LIKE 'LS%' and sj.description LIKE 'Log shipping%' 
-ORDER BY sj.name;

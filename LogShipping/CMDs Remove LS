@@ -1,0 +1,48 @@
+-- To get list of LS related jobs and delete them
+SELECT 
+--*
+    'EXEC msdb.dbo.sp_delete_job @job_name = N''' + sj.name + ''', @delete_unused_schedule=1;' DropStatement
+FROM msdb.dbo.sysjobs sj
+WHERE sj.name LIKE 'LS%' and sj.description LIKE 'Log shipping%' 
+ORDER BY sj.name;
+
+(disabling -- Disable backup job on primary
+EXEC msdb.dbo.sp_update_job
+    @job_name = 'LSBackup_YourDB',
+    @enabled = 0;
+)
+
+-- You can run the below, then finally run the above syntax to delete the jobs. 
+
+--On the Secondary Server: Run this on the secondary to remove its Log Shipping config:
+ 
+EXEC master.dbo.sp_delete_log_shipping_secondary_database
+    @secondary_database = N'Logshippingtest';
+
+--Then remove metadata about the primary from the secondary:
+EXEC master.dbo.sp_delete_log_shipping_secondary_primary
+    @primary_server = N'henok',
+    @primary_database = N'Logshippingtest'
+
+
+--On the Primary Server: Now clean up the primary database’s Log Shipping configuration:
+
+EXEC master.dbo.sp_delete_log_shipping_primary_secondary
+    @primary_database = N'Logshippingtest',
+    @secondary_server = N'henok\TestEnv',
+    @secondary_database = N'Logshippingtest';
+
+--Finally, remove the primary log shipping setup itself:
+
+EXEC master.dbo.sp_delete_log_shipping_primary_database
+    @database = N'Logshippingtest';
+
+
+--(Optional) Bring Secondary DB Online: If you want to bring the secondary database online (readable, usable):
+ 
+--RESTORE DATABASE Logshippingtest WITH RECOVERY;
+--/* ALTER DATABASE [Logshippingtest] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [Logshippingtest] */
+ 
+
+
+

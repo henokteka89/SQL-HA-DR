@@ -30,3 +30,13 @@ $logShippingConfig = @{
 }
 
 Invoke-DbaDbLogShipping @logShippingConfig
+
+
+-- If there is a need to give access to sql service account, get the name.
+SELECT 
+    servicename,
+    startup_type_desc,
+    status_desc,
+    service_account
+FROM 
+    sys.dm_server_services;

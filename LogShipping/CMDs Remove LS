@@ -12,7 +12,7 @@ EXEC msdb.dbo.sp_update_job
     @enabled = 0;
 )
 
--- You can run the below, then finally run the above syntax to delete the jobs. 
+-- You can run the below, it will likely remove the jobs as well. 
 
 --On the Secondary Server: Run this on the secondary to remove its Log Shipping config:
  

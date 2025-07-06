@@ -3,6 +3,8 @@ GO
 /*
 -- The stored proc must run on BOTH PRIMARY AND SECONDARY 
 -- 1. Create Log Shipping on both Primary and Secondary and Enable Job
+USE DBAUTIL
+GO
 EXEC dbo.usp_manage_log_shipping
     @PrimaryServer = 'HENOK',
     @SecondaryServer = 'HENOK\TESTENV',

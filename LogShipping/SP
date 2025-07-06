@@ -1,8 +1,26 @@
 USE DBAUtil
 GO
 /*
+IMPORTANT 
+ -- This stored procedure is specifically designed to create a new Log Shipping configuration or completely remove an existing one.
+
+Do NOT run this stored procedure if a Log Shipping configuration already exists, as it may unintentionally remove or overwrite existing setups, including those unrelated to the current context.
+
+Purpose
+This procedure was originally developed to facilitate a Log Shipping setup between:
+An isolated instance that will temporarily act as the primary during a Disaster Recovery (DR) exercise, and
+A secondary DR instance that will serve as the DR site for the duration of the exercise.
+
+Usage Warning
+This is not intended for use in production without fully understanding the logic and potential consequences.
+Improper use can result in:
+Removal of all log shipping metadata
+Dropping of jobs and configuration related to other databases
+
+Please review and validate the logic thoroughly before executing in any environment.
+
 -- The stored proc must run on BOTH PRIMARY AND SECONDARY 
--- 1. Create Log Shipping on both Primary and Secondary and Enable Job
+-- 1. CREATE Log Shipping on both Primary and Secondary and ENABLE the Jobs
 USE DBAUTIL
 GO
 EXEC dbo.usp_manage_log_shipping
@@ -15,7 +33,7 @@ EXEC dbo.usp_manage_log_shipping
     @RestoreDirectory = 'E:\';
 
  
--- 2. Drop Log Shipping configuration on both Primary and Secondary
+-- 2. DROP Log Shipping configuration on both Primary and Secondary
 -- Run this when you want to remove the entire log shipping setup
 EXEC dbo.usp_manage_log_shipping
     @PrimaryServer = 'HENOK',

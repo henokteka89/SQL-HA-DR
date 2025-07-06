@@ -16,14 +16,17 @@ EXEC msdb.dbo.sp_update_job
 
 --On the Secondary Server: Run this on the secondary to remove its Log Shipping config:
  
+Declare @LSdatabase nvarchar(100) = (select primary_database from msdb.dbo.log_shipping_monitor_secondary) --'logshippingtest'
+Declare @primaryserver  nvarchar(100) = (select primary_server from msdb.dbo.log_shipping_monitor_secondary)
+
+
 EXEC master.dbo.sp_delete_log_shipping_secondary_database
-    @secondary_database = N'Logshippingtest';
+    @secondary_database = @LSdatabase;
 
 --Then remove metadata about the primary from the secondary:
 EXEC master.dbo.sp_delete_log_shipping_secondary_primary
-    @primary_server = N'henok',
-    @primary_database = N'Logshippingtest'
-
+    @primary_server = @primaryserver,
+    @primary_database = @LSdatabase
 
 --On the Primary Server: Now clean up the primary database’s Log Shipping configuration:
 

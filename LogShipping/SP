@@ -1,39 +1,24 @@
 USE DBAUtil
 GO
 /*
-EXEC dbo.ManageLogShippingServers
-    @PrimaryServer = 'SQLNODE1',
-    @SecondaryServer = 'SQLNODE2',
-    @LSDatabase = 'logshippingtest',
-    @BackupDirectory = '\\SQLNODE1\LSBackup',
-    @CopyDirectory = 'E:\LSLocalCopy',
-    @RestoreDirectory = 'E:\LSLocalCopy',
-    @CreateLS = 1;
-
-
--- 1. Create Log Shipping on both Primary and Secondary
+-- The stored proc must run on BOTH PRIMARY AND SECONDARY 
+-- 1. Create Log Shipping on both Primary and Secondary and Enable Job
 EXEC dbo.usp_manage_log_shipping
-    @PrimaryServer = 'PRIMARYSQL01',
-    @SecondaryServer = 'SECONDARYSQL01',
-    @DatabaseName = 'YourDBName',
+    @PrimaryServer = 'HENOK',
+    @SecondaryServer = 'HENOK\TESTENV',
+    @LSDatabase = 'Logshippingtest',
     @CreateLS = 1,
-    @BackupDirectory = '\\PRIMARYSQL01\LSBackup',
-    @CopyDirectory = '\\SECONDARYSQL01\LSCopy',
-    @RestoreDirectory = 'C:\LSRestore';
+    @BackupDirectory = '\\HENOK\Liya Picture',
+    @CopyDirectory = 'E:\',
+    @RestoreDirectory = 'E:\';
 
--- 2. Enable and Schedule the Log Shipping Jobs on both Primary and Secondary
-EXEC dbo.usp_manage_log_shipping
-    @PrimaryServer = 'PRIMARYSQL01',
-    @SecondaryServer = 'SECONDARYSQL01',
-    @DatabaseName = 'YourDBName',
-    @EnableSchedule = 1;
-
--- 3. Drop Log Shipping configuration on both Primary and Secondary
+ 
+-- 2. Drop Log Shipping configuration on both Primary and Secondary
 -- Run this when you want to remove the entire log shipping setup
 EXEC dbo.usp_manage_log_shipping
-    @PrimaryServer = 'PRIMARYSQL01',
-    @SecondaryServer = 'SECONDARYSQL01',
-    @DatabaseName = 'YourDBName',
+    @PrimaryServer = 'HENOK',
+    @SecondaryServer = 'HENOK\TESTENV',
+    @LSDatabase = 'Logshippingtest',
     @DropLS = 1;
 
 */

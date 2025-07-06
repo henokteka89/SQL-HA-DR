@@ -1,0 +1,79 @@
+
+
+ -- Run on the PRIMARY SERVER
+
+-- STEP 1: Enable log shipping (in case it's not already enabled)
+/*EXEC master.dbo.sp_configure 'show advanced options', 1;
+RECONFIGURE;
+EXEC master.dbo.sp_configure 'log shipping', 1;
+RECONFIGURE;
+*/
+-- Variables
+DECLARE 
+    @primary_database        sysname       = N'logshippingtest',          -- Your database name
+    @backup_directory        nvarchar(500) = N'\\HENOK\Liya Picture', -- Shared path accessible to both
+    @backup_job_name         sysname,
+    @backup_retention_period int           = 4320,    -- in minutes (3 days)
+    @monitor_server          sysname       = @@SERVERNAME,
+    @monitor_server_security_mode int      = 1,       -- 1 = Windows Auth
+    @backup_job_id           UNIQUEIDENTIFIER;
+
+-- STEP 2: Configure Log Shipping on Primary
+EXEC master.dbo.sp_add_log_shipping_primary_database
+    @database = @primary_database,
+    @backup_directory = @backup_directory,
+	@backup_share = @backup_directory,
+    @backup_retention_period = @backup_retention_period,
+    @backup_job_name = NULL,
+    @backup_threshold = 60,
+    @threshold_alert_enabled = 1,
+    @history_retention_period = 5760,
+    @monitor_server = @monitor_server,
+    @monitor_server_security_mode = @monitor_server_security_mode,
+    @backup_job_id = @backup_job_id OUTPUT;
+
+
+
+---------------
+Each has to be scheduled in both 
+---------------
+
+
+
+
+-- Adding secondary server and next Database 
+-- Replace with your actual values
+EXEC master.dbo.sp_add_log_shipping_secondary_primary
+    @primary_server = N'henok',                 -- exact name of primary
+    @primary_database = N'logshippingtest',     -- DB name on primary
+    @backup_source_directory = N'\\HENOK\Liya Picture',  -- shared path used by primary to backup
+    @backup_destination_directory = N'E:\LSLocalCopy',      -- where to copy files locally
+    @copy_job_name = NULL,
+    @copy_job_id = NULL;
+
+
+-- Variables
+DECLARE 
+    @secondary_database      sysname       = N'logshippingtest'         -- Must match the restored DB name
+DECLARE
+@primary_server          sysname       = N'henok'        -- Replace with actual primary
+DECLARE
+@primary_database        sysname       = @secondary_database,
+    @copy_directory          nvarchar(500) = N'E:\LSLocalCopy',        -- Local copy folder
+    @restore_directory       nvarchar(500) = N'E:\LSLocalCopy',          -- Optional: location of MDF/LDF
+    @copy_job_id             UNIQUEIDENTIFIER,
+    @restore_job_id          UNIQUEIDENTIFIER;
+
+-- STEP 4: Add secondary DB
+EXEC master.dbo.sp_add_log_shipping_secondary_database
+    @secondary_database = @secondary_database,
+    @primary_server = @primary_server,
+    @primary_database = @primary_database,
+    @restore_delay = 0,
+    @restore_mode = 1, -- Standby=0, NoRecovery=1
+    @disconnect_users = 1,
+    @restore_threshold = 45,
+    @threshold_alert_enabled = 1,
+    @history_retention_period = 5760
+    --,@monitor_server = @primary_server
+    --,@monitor_server_security_mode = 1,

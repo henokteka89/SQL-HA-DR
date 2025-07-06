@@ -1,5 +1,5 @@
 LONG STORY SHORT: WHAT THE BELOW DOES
-1. ON THE PRIMARY, IT ENABLE LS AND ADD JOBS (ALERT AND BACKUP) BUT DONT ENABLE AND SCHEDULE BY DEFAULT. SO AT THE END THERE IS A SCRIPT TO ENABLE AND SCHEDULE THE JOBS
+1. ON THE PRIMARY, IT ENABLE LS AND ADD JOBS (ALERT AND BACKUP) BUT DONT ENABLE AND SCHEDULE BY DEFAULT. SO AT THE END THERE IS A SCRIPT TO ENABLE AND SCHEDULE THE JOBS. tHE ALERT IS ENABLED AND RUNS EVERY 2 MIN.
 2. ON THE SECONDARY, IT ADDS THE SECONDARY AND CREATE JOBS (COPY AND RESTORE). AT THE END THERE IS A SCRIPT TO ENABLE AND START THE JOB.
 
 
@@ -133,4 +133,80 @@ END
 
 
 
+-----------------------------------
+-- On Secondary
+--select * from msdb.dbo.log_shipping_monitor_secondary
+ Declare @servername nvarchar(100) = @@servername
+Declare @LSdatabase nvarchar(100) = (select primary_database from msdb.dbo.log_shipping_monitor_secondary) --'logshippingtest'
+Declare @primaryserver  nvarchar(100) = (select primary_server from msdb.dbo.log_shipping_monitor_secondary)
+Declare @job_name_copy nvarchar(200) = 'LSCopy_' + @primaryserver + '_' + @LSdatabase
+Declare @job_name_restore nvarchar(200) = 'LSRestore_' + @primaryserver + '_' + @LSdatabase
+ 
+--select @job_name_copy, @job_name_restore
+
+-- Enable the job
+Print 'Enabling a job... '
+EXEC msdb.dbo.sp_update_job  
+    @job_name = @job_name_copy --'LSBackup_logshippingtest'  
+    ,@enabled = 1;
+Print 'Job enabled'
+
+Print '
+Enabling a job... '
+EXEC msdb.dbo.sp_update_job  
+    @job_name = @job_name_restore --'LSBackup_logshippingtest'  
+    ,@enabled = 1;
+Print 'Job enabled'
+
+
+-- Create the schedule (only if it doesn't already exist)
+IF NOT EXISTS (
+    SELECT 1 FROM msdb.dbo.sysschedules WHERE name = N'Every 15 Minutes'
+)
+BEGIN
+    EXEC msdb.dbo.sp_add_schedule  
+        @schedule_name = N'Every 15 Minutes',  
+        @enabled = 1,  
+        @freq_type = 4,              -- Daily  
+        @freq_interval = 1,          -- Every day  
+        @freq_subday_type = 4,       -- Minutes  
+        @freq_subday_interval = 15,  -- Every 15 minutes  
+        @active_start_time = 0;      -- 12:00 AM
+END
+
+-- Attach the schedule to the job (only if not already attached)
+
+-- For the copy job
+IF NOT EXISTS (
+    SELECT 1 
+    FROM msdb.dbo.sysjobs j
+    JOIN msdb.dbo.sysjobschedules js ON j.job_id = js.job_id
+    JOIN msdb.dbo.sysschedules s ON js.schedule_id = s.schedule_id
+    WHERE j.name = @job_name_copy /*'LSBackup_logshippingtest'*/ AND s.name = 'Every 15 Minutes'
+)
+BEGIN
+Print '
+Scheduling a job... '
+    EXEC msdb.dbo.sp_attach_schedule  
+        @job_name = @job_name_copy --'LSBackup_logshippingtest'  
+        ,@schedule_name = N'Every 15 Minutes';
+Print 'Scheduling Completed... '
+END
+ 
+-- For the restore job
+IF NOT EXISTS (
+    SELECT 1 
+    FROM msdb.dbo.sysjobs j
+    JOIN msdb.dbo.sysjobschedules js ON j.job_id = js.job_id
+    JOIN msdb.dbo.sysschedules s ON js.schedule_id = s.schedule_id
+    WHERE j.name = @job_name_restore /*'LSBackup_logshippingtest'*/ AND s.name = 'Every 15 Minutes'
+)
+BEGIN
+Print '
+Scheduling a job... '
+    EXEC msdb.dbo.sp_attach_schedule  
+        @job_name = @job_name_restore --'LSBackup_logshippingtest'  
+        ,@schedule_name = N'Every 15 Minutes';
+Print 'Scheduling Completed... '
+END
 

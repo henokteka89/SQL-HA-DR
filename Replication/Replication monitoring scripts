@@ -1,0 +1,195 @@
+CREATE OR ALTER PROCEDURE dbo.usp_GeneralReplicationInfo
+(
+     @Info BIT = 1    -- General Info flag
+    ,@FindPubInfoByTable SYSNAME = NULL   -- Pass a table name to find publication info
+    ,@TotalArticlesPerPub BIT = 1         -- Return total articles per publication
+    ,@GetRecentErrors BIT = 1             -- Fetch recent replication errors
+    ,@GetPublisherDatabaseId NVARCHAR(128) = 'all'  -- Pass 'all' or a specific database name
+    ,@xact_seqno NCHAR(22) = null -- '0X004A63B002EA800040000' -- Replication transaction sequence number
+    ,@CheckDelaysAndIssues BIT = 1         -- Check replication delays/issues
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- ==========================================
+    -- Template for general replication procedure
+    -- ==========================================
+    -- @Info                 -> returns general replication info if 1
+    -- @FindPubInfoByTable   -> pass table name to find its publication info
+    -- @TotalArticlesPerPub  -> returns total articles per publication if 1
+    -- @GetRecentErrors      -> returns replication errors if 1
+    -- @GetPublisherDatabaseId -> 'all' for all publishers, else pass a specific db name
+    -- @xact_seqno           -> replication transaction seqno (default = randomvalue placeholder)
+    -- @CheckDelaysAndIssues -> checks replication latency/issues if 1
+    -- ==========================================
+
+    BEGIN TRY
+        -- Placeholder: Add logic as per each parameter requirement
+        PRINT 'Stored procedure execution started...';
+
+        IF @Info = 1
+        BEGIN
+            PRINT 'Returning general replication info...';
+            -- General replication information
+            SELECT DISTINCT  
+           'General Info' AS InfoType,
+           publisher AS [Publisher Server],
+           subscriber AS [Subscriber Server],
+           'EXEC distribution..sp_helpsubscriberinfo;' AS GetDetail,
+           '-- List all subscriptions: EXEC dbname..sp_helpsubscription;  
+             -- List all distributors: EXEC sp_helpdistributor;  
+             -- List all distribution databases: EXEC sp_helpdistributiondb;' AS [Important Commands],
+           '1. https://learn.microsoft.com/en-us/sql/relational-databases/replication/monitor/monitoring-replication?view=sql-server-ver17
+		   2. https://peter-whyte.com/2024/12/sql-server-replication-monitoring-scripts/' AS [Replication Monitoring URL] 
+     FROM distribution..mssubscriber_info;
+        END
+
+        IF @FindPubInfoByTable IS NOT NULL
+        BEGIN
+            PRINT 'Finding publication info by table...';
+            IF @FindPubInfoByTable IS NOT NULL
+BEGIN
+    SELECT  
+           p.publisher_db        AS [Publisher Database],
+           p.publication         AS [Publication Name],
+           a.article             AS [Article Name],
+           a.destination_object  AS [Destination Table],
+           a.source_owner        AS [Source Schema],
+           a.source_object       AS [Source Table] 
+    FROM distribution..MSarticles a
+    INNER JOIN distribution..MSpublications p 
+        ON a.publication_id = p.publication_id
+    WHERE a.article LIKE '%' + @FindPubInfoByTable + '%'
+       OR a.source_object LIKE '%' + @FindPubInfoByTable + '%';
+END
+
+        END
+
+        IF @TotalArticlesPerPub = 1
+        BEGIN
+            PRINT 'Returning total articles per publication...';
+            SELECT  
+           p.publication       AS [Publication Name],
+           COUNT(*)            AS [Total Articles]
+    FROM distribution..MSarticles a
+    INNER JOIN distribution..MSpublications p 
+        ON a.publication_id = p.publication_id
+    GROUP BY p.publication
+    ORDER BY COUNT(*) DESC;
+        END
+
+        IF @GetRecentErrors = 1
+        BEGIN
+            PRINT 'Fetching recent replication errors...';
+              SELECT  error_text,[time],xact_seqno,command_id,session_id
+              FROM distribution..MSrepl_errors ORDER BY [time] DESC;
+        END
+
+        IF @GetPublisherDatabaseId <> 'all'
+        BEGIN
+            PRINT 'Returning data for specific publisher database...';
+            SELECT  
+           id AS [PublisherDB ID],
+           publisher_db,
+           publisher_id
+    FROM distribution..MSpublisher_databases
+    
+END
+ELSE
+BEGIN
+    SELECT  
+           id AS [PublisherDB ID],
+           publisher_db,
+           publisher_id
+    FROM distribution..MSpublisher_databases
+	WHERE publisher_db = @GetPublisherDatabaseId;
+END
+         
+		IF @xact_seqno IS NOT NULL
+BEGIN
+    EXEC distribution..sp_browsereplcmds  
+         @xact_seqno_start = @xact_seqno,  
+         @xact_seqno_end   = @xact_seqno,  
+         @publisher_database_id = 2;   -- Hardcoded for now, can be parameterized
+END
+
+        IF @CheckDelaysAndIssues = 1
+        BEGIN
+            PRINT 'Checking replication delays and issues...';
+           -- Check for issues (for alert)
+;WITH Subscribers_CTE AS (
+    SELECT DISTINCT
+        ms.publication_id AS PublicationId,
+        sp.srvname AS PublisherServer,
+        ms.publisher_db AS PublisherDatabase,
+        ss.srvname AS SubscriberServer,
+        ms.subscriber_db AS SubscriberDatabase,
+        ms.subscription_type AS ReplicationType,
+        ms.agent_id AS AgentId
+    FROM distribution..[MSsubscriptions] ms
+        INNER JOIN distribution..[MSreplservers] sp ON ms.publisher_id = sp.srvid
+        INNER JOIN distribution..[MSreplservers] ss ON ms.subscriber_id = ss.srvid
+    WHERE ms.subscriber_db <> 'virtual'
+),
+AgentsStates_CTE AS (
+    SELECT
+        publisher AS PublisherServer,
+        publisher_db AS PublisherDatabase,
+        MAX(CASE WHEN agent_type = 1 THEN status END) AS SnapshotAgent,
+        MAX(CASE WHEN agent_type = 2 THEN status END) AS LogReaderAgent,
+        MAX(CASE WHEN agent_type = 3 THEN status END) AS DistributionAgent,
+        MAX(CASE WHEN agent_type = 4 THEN status END) AS MergeAgent,
+        MAX(CASE WHEN agent_type = 9 THEN status END) AS QueueReaderAgent
+    FROM [distribution].[dbo].[MSreplication_monitordata]
+    GROUP BY publisher, publisher_db
+)
+SELECT
+    s.PublicationId,
+    s.AgentId,
+    s.PublisherServer,
+    s.PublisherDatabase,
+    s.SubscriberServer,
+    s.SubscriberDatabase,
+    CASE ReplicationType
+        WHEN 0 THEN 'Transactional'
+        WHEN 1 THEN 'Snapshot'
+        WHEN 2 THEN 'Merge'
+    END AS ReplicationType,
+    CASE MAX(md.status)
+        WHEN 6 THEN 'Failed'
+        WHEN 5 THEN 'Retrying'
+        WHEN 4 THEN 'Idle'
+        WHEN 3 THEN 'In progress'
+        WHEN 2 THEN 'Stopped'
+        WHEN 1 THEN 'Started'
+    END AS ReplicationStatus,
+    --MAX(md.status) AS ReplicationStatus,
+    MAX(md.warning) AS ReplicationWarning,
+    SUM(md.cur_latency) AS ReplicationLatency,
+    MAX(md.last_distsync) AS LastSync,
+    DATEDIFF(SECOND, MAX(md.last_distsync), SYSDATETIME()) AS SecondsSinceLastSync
+FROM Subscribers_CTE s
+INNER JOIN [distribution].[dbo].[MSreplication_monitordata] md
+    ON md.publication_id = s.PublicationId AND md.agent_id = s.AgentId
+INNER JOIN AgentsStates_CTE a
+    ON a.PublisherServer = s.PublisherServer
+    AND a.PublisherDatabase = s.PublisherDatabase
+GROUP BY
+    s.PublicationId,
+    s.AgentId,
+    s.PublisherServer,
+    s.PublisherDatabase,
+    s.SubscriberServer,
+    s.SubscriberDatabase,
+    s.ReplicationType
+        END
+
+        PRINT 'Stored procedure execution completed.';
+    END TRY
+    BEGIN CATCH
+        PRINT 'Error occurred in procedure.';
+        THROW;
+    END CATCH
+END
+GO

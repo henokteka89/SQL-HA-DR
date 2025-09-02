@@ -1,4 +1,4 @@
-CREATE OR ALTER PROCEDURE dbo.usp_GeneralReplicationInfo
+CREATE OR ALTER PROCEDURE sp_GeneralReplicationInfo
 (
      @Info BIT = 1    -- General Info flag
     ,@FindPubInfoByTable SYSNAME = NULL   -- Pass a table name to find publication info

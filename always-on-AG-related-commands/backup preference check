@@ -1,0 +1,12 @@
+-- Check AG backup preference
+SELECT ag.name, ag.automated_backup_preference_desc
+FROM sys.availability_groups ag;
+
+-- Check replica settings (backup priority and readable setting)
+SELECT replica_server_name,
+       backup_priority,
+       secondary_role_allow_connections_desc
+FROM sys.availability_replicas;
+
+-- See if this node thinks it should take backup
+SELECT sys.fn_hadr_backup_is_preferred_replica('core') AS IsPreferredReplica;

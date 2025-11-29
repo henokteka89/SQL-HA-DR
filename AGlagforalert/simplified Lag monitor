@@ -1,0 +1,22 @@
+
+
+Select 
+ag.name as AGName, 
+ar.replica_server_name as ReplicaName,
+dbcs.database_name as DBName,
+--Sync lag in seconds: last_sent_time - last_redone_time
+DateDiff(Second,dbr.last_redone_time, dbr.last_sent_time) AS [sync_lag_(secs)],
+dbr.synchronization_state_desc AS synchronizationState,
+dbr.last_redone_time AS LastRedoneTime,
+dbr.last_sent_time as LastSentTime,
+dbr.log_send_queue_soze as LogSendQueueSize, --KB
+dbr.redo_queue_size as RedoQueuesize_KB, 
+dbr.redo_rate as [RedoRate_KB/S]
+From master.sys.dm_hadr_database_replica_states as dbr
+Join master.sys.availability_replicas as ar on ar.replica_id = dbr.replica_id
+join master.sys.availability_groups as ag on ag.group_id= dbr.group_id
+Join master.sys.dm_hadr_database_replica_cluster_states as dbcs on dbcs.replica_id = dbr.replica_id
+and dbcs.database_name = DB_NAME(dbr.database_id)
+where dbr.is_primary_replcia = 0 --secondary replicas
+and dbr.synchronization_state_desc IN ('Synchronized', 'Synchronizing')
+and DateDiff(Second,dbr.last_redone_time, dbr.last_sent_time) >= 6 --exceeding 6 sec

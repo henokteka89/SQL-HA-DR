@@ -1,4 +1,7 @@
-
+Create or Alter Proc #sp_monitorag
+(@lagsec int = 60)
+As
+-- Exec #sp_monitorag 6
 Select 
 ag.name as AGName, 
 ar.replica_server_name as ReplicaName,
@@ -18,4 +21,5 @@ Join master.sys.dm_hadr_database_replica_cluster_states as dbcs on dbcs.replica_
 and dbcs.database_name = DB_NAME(dbr.database_id)
 where dbr.is_primary_replica = 0 --secondary replicas
 and dbr.synchronization_state_desc IN ('Synchronized', 'Synchronizing')
-and DateDiff(Second,dbr.last_redone_time, dbr.last_sent_time) >= 6 --exceeding 6 sec
+-- and DateDiff(Second,dbr.last_redone_time, dbr.last_sent_time) >= 6 --exceeding 6 sec --uncomment for debugging
+and DateDiff(Second,dbr.last_redone_time, dbr.last_sent_time) >= lagsec --with stored proc

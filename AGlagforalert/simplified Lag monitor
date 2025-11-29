@@ -23,5 +23,5 @@ and dbcs.database_name = DB_NAME(dbr.database_id)
 where dbr.is_primary_replica = 0 --secondary replicas
 and dbr.synchronization_state_desc IN ('Synchronized', 'Synchronizing')
 -- and DateDiff(Second,dbr.last_redone_time, dbr.last_sent_time) >= 6 --exceeding 6 sec --uncomment for debugging
-and DateDiff(Second,dbr.last_redone_time, dbr.last_sent_time) >= lagsec --with stored proc
+and DateDiff(Second,dbr.last_redone_time, dbr.last_sent_time) >= @lagsec --with stored proc
 SET NOCOUNT OFF

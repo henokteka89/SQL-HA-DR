@@ -1,6 +1,7 @@
 Create or Alter Proc #sp_monitorag
 (@lagsec int = 60)
 As
+SET NOCOUNT ON
 -- Exec #sp_monitorag 6
 Select 
 ag.name as AGName, 
@@ -23,3 +24,4 @@ where dbr.is_primary_replica = 0 --secondary replicas
 and dbr.synchronization_state_desc IN ('Synchronized', 'Synchronizing')
 -- and DateDiff(Second,dbr.last_redone_time, dbr.last_sent_time) >= 6 --exceeding 6 sec --uncomment for debugging
 and DateDiff(Second,dbr.last_redone_time, dbr.last_sent_time) >= lagsec --with stored proc
+SET NOCOUNT OFF

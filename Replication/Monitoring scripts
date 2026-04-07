@@ -1,0 +1,30 @@
+exec amin..sp_generalreplicationinfo @info = 1, @findpubinfobytable = 'x509cert', @totalarticlesperpub = 1, @getrecenterrors = 1, @pasthour = 2, @getpublisherdatabaseid = 'es', 
+@xact_seqno = '0x003..', @checkdelaysandissues = 1, @allpublishersubscriberdetails = 1
+
+exec distribution.dbo.usp_replicationomnitor
+
+-- Get recent errors
+select * from distribution.dbo.msrepl_errors
+-- where error_code in ('2601', '2627', '20598') or error_text like '%tablename%'
+order by time desc
+
+-- Check specific seqno
+Exec distribution..sp_beowsereplcmds @xact_seqno_start = '0x003', @xact_seqno_end = '0x003..'
+
+--
+Exec distibution..sp_helpsubscriptionerrors @publisher = 'dev', @publisher_db = 'dbname', @publication = 'pubname', @subscriber = 'subscriber', @subscriber_db = 'subsc dbname'
+
+-- Check undistributed command with latency
+Exec distibution..sp_replmonitorsubsticptionpendingcmds  @publisher = 'dev', @publisher_db = 'dbname', @publication = 'pubname', @subscriber = 'subscriber', @subscriber_db = 'subsc dbname', 
+@subscription_type = '0' -- execute at the distributor server , in distribution server
+
+-- currently with latency, details
+Exec admin..usp_getreplicationlatency
+
+-- see recent history for this agent to confirm no recent errors
+select top (100) h.runstatus, h.time, h.comments, h.delivered_commands, h.delivered_transactions
+from distribution..msdistribution_agents a
+join distribution..msdistibution_history h on h.agent_id = a.id
+where a.name  = N'agentname' -- grab the name from the above usp command
+
+

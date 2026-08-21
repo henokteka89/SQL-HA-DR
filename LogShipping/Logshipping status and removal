@@ -1,0 +1,379 @@
+/* ============================================================================
+   LOG SHIPPING - STATUS REPORT  /  REMOVAL SCRIPT GENERATOR
+   (SQL Server - run in SSMS or sqlcmd, connected to the instance in question)
+   ============================================================================
+
+   WHAT THIS DOES
+   ----------------------------------------------------------------------------
+   Mode 1 - STATUS REPORT (default, @Drop = 0)
+     Reads the log shipping configuration on THIS server and PRINTs a plain-
+     English description of it: which database(s) it ships (as a primary),
+     which database(s) it receives (as a secondary), the backup/copy/restore
+     jobs involved and whether they last succeeded, how stale the last
+     backup/copy/restore is, and the alerting thresholds. Nothing is changed.
+
+   Mode 2 - GENERATE REMOVAL SCRIPT (@Drop = 1)
+     Does NOT change or remove anything. It PRINTs the exact T-SQL commands
+     that WOULD remove the log shipping configuration found on this server
+     (jobs, msdb bookkeeping tables, monitor entries, history) - so you can
+     read them, copy them out, and run them yourself when you're ready.
+     It never prints a DROP DATABASE statement. The user database itself
+     is always left in place; at most, an OPTIONAL note suggests bringing a
+     secondary database out of restoring/standby mode with RESTORE ... WITH
+     RECOVERY, which you can ignore if you want to keep it as-is.
+
+   IMPORTANT - THIS IS PER-SERVER
+   ----------------------------------------------------------------------------
+   Log shipping metadata is stored LOCALLY on each server involved. Run this
+   on the PRIMARY server to see/generate the primary side, and separately on
+   the SECONDARY server (and the monitor server, if you use a dedicated one)
+   to see/generate that side. One run only ever reports on the server you're
+   connected to.
+
+   HOW TO USE
+   ----------------------------------------------------------------------------
+   1. Edit the two variables directly below (nothing else needs editing).
+   2. Run the ENTIRE script as a single batch (don't split it with GO -
+      the variables need to stay alive from top to bottom).
+   3. Read the output in the Messages tab (SSMS) - that's where PRINT goes.
+
+   BEFORE YOU ACTUALLY REMOVE LOG SHIPPING
+   ----------------------------------------------------------------------------
+   - Log shipping is a disaster-recovery mechanism. Once removed, the
+     secondary copy stops receiving updates - make sure you no longer need
+     it as a DR/failover target before running the generated commands.
+   - Consider taking a fresh full backup of the primary database first.
+   - Run the status report (Mode 1) and keep a copy of the output before you
+     remove anything, in case you ever need to see what the configuration
+     used to be.
+   ============================================================================ */
+
+SET NOCOUNT ON;
+
+DECLARE @Drop         BIT     = 0;     -- 0 = status report (default)  |  1 = generate removal script (print-only, nothing executed)
+DECLARE @DatabaseName SYSNAME = NULL;  -- NULL = every log-shipped database on this server  |  or set a name to focus on just one
+
+PRINT REPLICATE('=', 78);
+PRINT 'LOG SHIPPING TOOL   -   server: ' + CAST(@@SERVERNAME AS NVARCHAR(128)) + '   run at: ' + CONVERT(VARCHAR(19), GETDATE(), 120);
+PRINT 'Mode: ' + CASE WHEN @Drop = 1 THEN 'GENERATE REMOVAL SCRIPT (preview only - nothing will be executed)' ELSE 'STATUS REPORT' END;
+IF @DatabaseName IS NOT NULL PRINT 'Scoped to database: ' + @DatabaseName;
+PRINT REPLICATE('=', 78);
+PRINT '';
+
+IF NOT EXISTS (SELECT 1 FROM msdb.dbo.log_shipping_primary_databases WHERE (@DatabaseName IS NULL OR primary_database = @DatabaseName))
+   AND NOT EXISTS (SELECT 1 FROM msdb.dbo.log_shipping_secondary_databases WHERE (@DatabaseName IS NULL OR secondary_database = @DatabaseName))
+BEGIN
+    PRINT 'No log shipping configuration was found on this server' + CASE WHEN @DatabaseName IS NOT NULL THEN ' for database [' + @DatabaseName + ']' ELSE '' END + '.';
+    PRINT 'Remember: this only checks the server you are connected to right now - run it on the other server(s) in the relationship too if you need the full picture.';
+    RETURN;
+END
+
+IF @Drop = 0
+BEGIN
+    ----------------------------------------------------------------------
+    -- PRIMARY ROLE - STATUS
+    ----------------------------------------------------------------------
+    IF EXISTS (SELECT 1 FROM msdb.dbo.log_shipping_primary_databases WHERE (@DatabaseName IS NULL OR primary_database = @DatabaseName))
+    BEGIN
+        PRINT '--- THIS SERVER IS A PRIMARY ------------------------------------------------';
+        PRINT '';
+
+        DECLARE @rp_primary_id UNIQUEIDENTIFIER,
+                @rp_primary_database SYSNAME,
+                @rp_backup_directory NVARCHAR(500),
+                @rp_backup_share NVARCHAR(500),
+                @rp_backup_job_id UNIQUEIDENTIFIER,
+                @rp_last_backup_file NVARCHAR(500),
+                @rp_last_backup_date DATETIME,
+                @rp_monitor_server SYSNAME,
+                @rp_backup_threshold INT,
+                @rp_threshold_alert_enabled BIT,
+                @rp_history_retention_period INT,
+                @rp_secondary_list NVARCHAR(MAX),
+                @rp_job_name SYSNAME,
+                @rp_job_status VARCHAR(20),
+                @rp_job_last_run DATETIME;
+
+        DECLARE cur_rpt_primary CURSOR LOCAL FAST_FORWARD FOR
+            SELECT pd.primary_id, pd.primary_database, pd.backup_directory, pd.backup_share,
+                   pd.backup_job_id, pd.last_backup_file, pd.last_backup_date, pd.monitor_server,
+                   mp.backup_threshold, mp.threshold_alert_enabled, mp.history_retention_period
+            FROM msdb.dbo.log_shipping_primary_databases pd
+            LEFT JOIN msdb.dbo.log_shipping_monitor_primary mp ON mp.primary_id = pd.primary_id
+            WHERE (@DatabaseName IS NULL OR pd.primary_database = @DatabaseName)
+            ORDER BY pd.primary_database;
+
+        OPEN cur_rpt_primary;
+        FETCH NEXT FROM cur_rpt_primary INTO @rp_primary_id, @rp_primary_database, @rp_backup_directory, @rp_backup_share,
+              @rp_backup_job_id, @rp_last_backup_file, @rp_last_backup_date, @rp_monitor_server,
+              @rp_backup_threshold, @rp_threshold_alert_enabled, @rp_history_retention_period;
+
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            SET @rp_job_name = NULL; SET @rp_job_status = NULL; SET @rp_job_last_run = NULL;
+
+            SELECT @rp_job_name = j.name FROM msdb.dbo.sysjobs j WHERE j.job_id = @rp_backup_job_id;
+
+            SELECT TOP (1)
+                   @rp_job_status = CASE h.run_status WHEN 0 THEN 'FAILED' WHEN 1 THEN 'Succeeded' WHEN 2 THEN 'Retry' WHEN 3 THEN 'Canceled' WHEN 4 THEN 'In progress' ELSE 'Unknown' END,
+                   @rp_job_last_run = msdb.dbo.agent_datetime(h.run_date, h.run_time)
+            FROM msdb.dbo.sysjobhistory h
+            WHERE h.job_id = @rp_backup_job_id AND h.step_id = 0
+            ORDER BY h.run_date DESC, h.run_time DESC;
+
+            SET @rp_secondary_list = STUFF((
+                SELECT CHAR(10) + '      -> ' + lps.secondary_server + '.' + lps.secondary_database
+                FROM msdb.dbo.log_shipping_primary_secondaries lps
+                WHERE lps.primary_id = @rp_primary_id
+                FOR XML PATH(''), TYPE
+            ).value('.', 'NVARCHAR(MAX)'), 1, 0, '');
+
+            PRINT 'Database: ' + @rp_primary_database;
+            PRINT '  Backs up transaction log to : ' + ISNULL(@rp_backup_share, ISNULL(@rp_backup_directory, '(not recorded)'));
+            PRINT '  Backup job                  : ' + ISNULL(@rp_job_name, '(job not found - may already be removed)') +
+                  CASE WHEN @rp_job_status IS NOT NULL THEN ' | last run: ' + @rp_job_status + ' at ' + CONVERT(VARCHAR(19), @rp_job_last_run, 120) ELSE ' | no run history found' END;
+            PRINT '  Last backup taken           : ' + ISNULL(@rp_last_backup_file, '(none recorded)') +
+                  CASE WHEN @rp_last_backup_date IS NOT NULL THEN ' at ' + CONVERT(VARCHAR(19), @rp_last_backup_date, 120) +
+                       ' (' + CAST(DATEDIFF(MINUTE, @rp_last_backup_date, GETDATE()) AS VARCHAR(20)) + ' minutes ago)' ELSE '' END;
+            PRINT '  Alerts if no backup within  : ' + ISNULL(CAST(@rp_backup_threshold AS VARCHAR(20)), 'not set') + ' minutes (alerting is ' +
+                  CASE @rp_threshold_alert_enabled WHEN 1 THEN 'ON' WHEN 0 THEN 'OFF' ELSE 'unknown' END + ')';
+            PRINT '  Keeps history for           : ' + ISNULL(CAST(@rp_history_retention_period AS VARCHAR(20)), 'not set') + ' minutes';
+            PRINT '  Monitor server              : ' + ISNULL(@rp_monitor_server, '(none configured)');
+            PRINT '  Ships to these secondaries  : ' + ISNULL(@rp_secondary_list, '(none registered on the primary side)');
+            PRINT '';
+
+            FETCH NEXT FROM cur_rpt_primary INTO @rp_primary_id, @rp_primary_database, @rp_backup_directory, @rp_backup_share,
+                  @rp_backup_job_id, @rp_last_backup_file, @rp_last_backup_date, @rp_monitor_server,
+                  @rp_backup_threshold, @rp_threshold_alert_enabled, @rp_history_retention_period;
+        END
+
+        CLOSE cur_rpt_primary;
+        DEALLOCATE cur_rpt_primary;
+    END
+
+    ----------------------------------------------------------------------
+    -- SECONDARY ROLE - STATUS
+    ----------------------------------------------------------------------
+    IF EXISTS (SELECT 1 FROM msdb.dbo.log_shipping_secondary_databases WHERE (@DatabaseName IS NULL OR secondary_database = @DatabaseName))
+    BEGIN
+        PRINT '--- THIS SERVER IS A SECONDARY -----------------------------------------------';
+        PRINT '';
+
+        DECLARE @rs_secondary_id UNIQUEIDENTIFIER,
+                @rs_secondary_database SYSNAME,
+                @rs_primary_server SYSNAME,
+                @rs_primary_database SYSNAME,
+                @rs_backup_source_directory NVARCHAR(500),
+                @rs_backup_destination_directory NVARCHAR(500),
+                @rs_copy_job_id UNIQUEIDENTIFIER,
+                @rs_restore_job_id UNIQUEIDENTIFIER,
+                @rs_last_copied_file NVARCHAR(500),
+                @rs_last_copied_date DATETIME,
+                @rs_monitor_server SYSNAME,
+                @rs_restore_delay INT,
+                @rs_restore_mode BIT,
+                @rs_disconnect_users BIT,
+                @rs_last_restored_file NVARCHAR(500),
+                @rs_last_restored_date DATETIME,
+                @rs_restore_threshold INT,
+                @rs_threshold_alert_enabled BIT,
+                @rs_last_restored_latency INT,
+                @rs_history_retention_period INT,
+                @rs_copy_job_name SYSNAME,
+                @rs_copy_job_status VARCHAR(20),
+                @rs_copy_job_last_run DATETIME,
+                @rs_restore_job_name SYSNAME,
+                @rs_restore_job_status VARCHAR(20),
+                @rs_restore_job_last_run DATETIME;
+
+        DECLARE cur_rpt_secondary CURSOR LOCAL FAST_FORWARD FOR
+            SELECT sd.secondary_id, sd.secondary_database, s.primary_server, s.primary_database,
+                   s.backup_source_directory, s.backup_destination_directory, s.copy_job_id, s.restore_job_id,
+                   s.last_copied_file, s.last_copied_date, s.monitor_server,
+                   sd.restore_delay, sd.restore_mode, sd.disconnect_users,
+                   sd.last_restored_file, sd.last_restored_date,
+                   ms.restore_threshold, ms.threshold_alert_enabled, ms.last_restored_latency, ms.history_retention_period
+            FROM msdb.dbo.log_shipping_secondary_databases sd
+            JOIN msdb.dbo.log_shipping_secondary s ON s.secondary_id = sd.secondary_id
+            LEFT JOIN msdb.dbo.log_shipping_monitor_secondary ms ON ms.secondary_id = sd.secondary_id AND ms.secondary_database = sd.secondary_database
+            WHERE (@DatabaseName IS NULL OR sd.secondary_database = @DatabaseName)
+            ORDER BY sd.secondary_database;
+
+        OPEN cur_rpt_secondary;
+        FETCH NEXT FROM cur_rpt_secondary INTO @rs_secondary_id, @rs_secondary_database, @rs_primary_server, @rs_primary_database,
+              @rs_backup_source_directory, @rs_backup_destination_directory, @rs_copy_job_id, @rs_restore_job_id,
+              @rs_last_copied_file, @rs_last_copied_date, @rs_monitor_server,
+              @rs_restore_delay, @rs_restore_mode, @rs_disconnect_users,
+              @rs_last_restored_file, @rs_last_restored_date,
+              @rs_restore_threshold, @rs_threshold_alert_enabled, @rs_last_restored_latency, @rs_history_retention_period;
+
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            SET @rs_copy_job_name = NULL; SET @rs_copy_job_status = NULL; SET @rs_copy_job_last_run = NULL;
+            SET @rs_restore_job_name = NULL; SET @rs_restore_job_status = NULL; SET @rs_restore_job_last_run = NULL;
+
+            SELECT @rs_copy_job_name = j.name FROM msdb.dbo.sysjobs j WHERE j.job_id = @rs_copy_job_id;
+            SELECT TOP (1) @rs_copy_job_status = CASE h.run_status WHEN 0 THEN 'FAILED' WHEN 1 THEN 'Succeeded' WHEN 2 THEN 'Retry' WHEN 3 THEN 'Canceled' WHEN 4 THEN 'In progress' ELSE 'Unknown' END,
+                   @rs_copy_job_last_run = msdb.dbo.agent_datetime(h.run_date, h.run_time)
+            FROM msdb.dbo.sysjobhistory h WHERE h.job_id = @rs_copy_job_id AND h.step_id = 0
+            ORDER BY h.run_date DESC, h.run_time DESC;
+
+            SELECT @rs_restore_job_name = j.name FROM msdb.dbo.sysjobs j WHERE j.job_id = @rs_restore_job_id;
+            SELECT TOP (1) @rs_restore_job_status = CASE h.run_status WHEN 0 THEN 'FAILED' WHEN 1 THEN 'Succeeded' WHEN 2 THEN 'Retry' WHEN 3 THEN 'Canceled' WHEN 4 THEN 'In progress' ELSE 'Unknown' END,
+                   @rs_restore_job_last_run = msdb.dbo.agent_datetime(h.run_date, h.run_time)
+            FROM msdb.dbo.sysjobhistory h WHERE h.job_id = @rs_restore_job_id AND h.step_id = 0
+            ORDER BY h.run_date DESC, h.run_time DESC;
+
+            PRINT 'Database: ' + @rs_secondary_database + '   (fed from primary ' + @rs_primary_server + '.' + @rs_primary_database + ')';
+            PRINT '  Copy job                    : ' + ISNULL(@rs_copy_job_name, '(job not found - may already be removed)') +
+                  CASE WHEN @rs_copy_job_status IS NOT NULL THEN ' | last run: ' + @rs_copy_job_status + ' at ' + CONVERT(VARCHAR(19), @rs_copy_job_last_run, 120) ELSE ' | no run history found' END;
+            PRINT '  Last file copied            : ' + ISNULL(@rs_last_copied_file, '(none recorded)') +
+                  CASE WHEN @rs_last_copied_date IS NOT NULL THEN ' at ' + CONVERT(VARCHAR(19), @rs_last_copied_date, 120) ELSE '' END;
+            PRINT '  Restore job                 : ' + ISNULL(@rs_restore_job_name, '(job not found - may already be removed)') +
+                  CASE WHEN @rs_restore_job_status IS NOT NULL THEN ' | last run: ' + @rs_restore_job_status + ' at ' + CONVERT(VARCHAR(19), @rs_restore_job_last_run, 120) ELSE ' | no run history found' END;
+            PRINT '  Last file restored          : ' + ISNULL(@rs_last_restored_file, '(none recorded)') +
+                  CASE WHEN @rs_last_restored_date IS NOT NULL THEN ' at ' + CONVERT(VARCHAR(19), @rs_last_restored_date, 120) +
+                       ' (' + CAST(DATEDIFF(MINUTE, @rs_last_restored_date, GETDATE()) AS VARCHAR(20)) + ' minutes ago)' ELSE '' END;
+            PRINT '  Restore mode                : ' + CASE @rs_restore_mode WHEN 0 THEN 'NORECOVERY (database not readable in between restores)' WHEN 1 THEN 'STANDBY (read-only in between restores)' ELSE 'unknown' END;
+            PRINT '  Restore delay / disconnects  : waits ' + ISNULL(CAST(@rs_restore_delay AS VARCHAR(20)), '0') + ' minute(s) before restoring each file, disconnects users during restore: ' +
+                  CASE @rs_disconnect_users WHEN 1 THEN 'Yes' WHEN 0 THEN 'No' ELSE 'unknown' END;
+            IF @rs_last_restored_latency IS NOT NULL
+                PRINT '  Currently behind primary by : ' + CAST(@rs_last_restored_latency AS VARCHAR(20)) + ' minute(s) - alert threshold ' +
+                      ISNULL(CAST(@rs_restore_threshold AS VARCHAR(20)), 'not set') + ' minutes (alerting is ' +
+                      CASE @rs_threshold_alert_enabled WHEN 1 THEN 'ON' WHEN 0 THEN 'OFF' ELSE 'unknown' END + ')';
+            PRINT '  Monitor server               : ' + ISNULL(@rs_monitor_server, '(none configured)');
+            PRINT '';
+
+            FETCH NEXT FROM cur_rpt_secondary INTO @rs_secondary_id, @rs_secondary_database, @rs_primary_server, @rs_primary_database,
+                  @rs_backup_source_directory, @rs_backup_destination_directory, @rs_copy_job_id, @rs_restore_job_id,
+                  @rs_last_copied_file, @rs_last_copied_date, @rs_monitor_server,
+                  @rs_restore_delay, @rs_restore_mode, @rs_disconnect_users,
+                  @rs_last_restored_file, @rs_last_restored_date,
+                  @rs_restore_threshold, @rs_threshold_alert_enabled, @rs_last_restored_latency, @rs_history_retention_period;
+        END
+
+        CLOSE cur_rpt_secondary;
+        DEALLOCATE cur_rpt_secondary;
+    END
+END
+ELSE
+BEGIN
+    ----------------------------------------------------------------------
+    -- @Drop = 1  ->  GENERATE (do not execute) the removal commands
+    ----------------------------------------------------------------------
+    PRINT '-- Everything below is PRINTED TEXT ONLY. Nothing on this server has been changed.';
+    PRINT '-- Copy the lines you need, review them, and run them yourself when ready.';
+    PRINT '-- None of this drops the actual user database - only the log shipping configuration.';
+    PRINT '';
+
+    ------------------------------------------------
+    -- Primary-side removal commands
+    ------------------------------------------------
+    IF EXISTS (SELECT 1 FROM msdb.dbo.log_shipping_primary_databases WHERE (@DatabaseName IS NULL OR primary_database = @DatabaseName))
+    BEGIN
+        PRINT '-- ================================================================';
+        PRINT '-- RUN ON THE PRIMARY SERVER (' + CAST(@@SERVERNAME AS NVARCHAR(128)) + '), in the master database:';
+        PRINT '-- ================================================================';
+        PRINT 'USE master;';
+        PRINT '';
+
+        DECLARE @gp_primary_database SYSNAME, @gp_secondary_server SYSNAME, @gp_secondary_database SYSNAME;
+
+        DECLARE cur_gen_primary_secs CURSOR LOCAL FAST_FORWARD FOR
+            SELECT pd.primary_database, lps.secondary_server, lps.secondary_database
+            FROM msdb.dbo.log_shipping_primary_databases pd
+            JOIN msdb.dbo.log_shipping_primary_secondaries lps ON lps.primary_id = pd.primary_id
+            WHERE (@DatabaseName IS NULL OR pd.primary_database = @DatabaseName)
+            ORDER BY pd.primary_database, lps.secondary_server, lps.secondary_database;
+
+        OPEN cur_gen_primary_secs;
+        FETCH NEXT FROM cur_gen_primary_secs INTO @gp_primary_database, @gp_secondary_server, @gp_secondary_database;
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            PRINT '-- Detach secondary ' + @gp_secondary_server + '.' + @gp_secondary_database + ' from primary ' + @gp_primary_database;
+            PRINT 'EXEC master.dbo.sp_delete_log_shipping_primary_secondary @primary_database = N''' + @gp_primary_database + ''', @secondary_server = N''' + @gp_secondary_server + ''', @secondary_database = N''' + @gp_secondary_database + ''';';
+            PRINT '';
+            FETCH NEXT FROM cur_gen_primary_secs INTO @gp_primary_database, @gp_secondary_server, @gp_secondary_database;
+        END
+        CLOSE cur_gen_primary_secs;
+        DEALLOCATE cur_gen_primary_secs;
+
+        DECLARE cur_gen_primary_dbs CURSOR LOCAL FAST_FORWARD FOR
+            SELECT DISTINCT pd.primary_database
+            FROM msdb.dbo.log_shipping_primary_databases pd
+            WHERE (@DatabaseName IS NULL OR pd.primary_database = @DatabaseName)
+            ORDER BY pd.primary_database;
+
+        OPEN cur_gen_primary_dbs;
+        FETCH NEXT FROM cur_gen_primary_dbs INTO @gp_primary_database;
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            PRINT '-- Remove primary-side log shipping config for ' + @gp_primary_database + ' (deletes the backup job, monitor records, and history - does NOT drop the database)';
+            PRINT 'EXEC master.dbo.sp_delete_log_shipping_primary_database @database = N''' + @gp_primary_database + ''';';
+            PRINT '';
+            FETCH NEXT FROM cur_gen_primary_dbs INTO @gp_primary_database;
+        END
+        CLOSE cur_gen_primary_dbs;
+        DEALLOCATE cur_gen_primary_dbs;
+    END
+
+    ------------------------------------------------
+    -- Secondary-side removal commands
+    ------------------------------------------------
+    IF EXISTS (SELECT 1 FROM msdb.dbo.log_shipping_secondary_databases WHERE (@DatabaseName IS NULL OR secondary_database = @DatabaseName))
+    BEGIN
+        PRINT '-- ================================================================';
+        PRINT '-- RUN ON THE SECONDARY SERVER (' + CAST(@@SERVERNAME AS NVARCHAR(128)) + '), in the master database:';
+        PRINT '-- ================================================================';
+        PRINT 'USE master;';
+        PRINT '';
+
+        DECLARE @gs_secondary_database SYSNAME;
+        DECLARE @gs_primary_server SYSNAME, @gs_primary_database SYSNAME;
+
+        DECLARE cur_gen_secondary_dbs CURSOR LOCAL FAST_FORWARD FOR
+            SELECT sd.secondary_database
+            FROM msdb.dbo.log_shipping_secondary_databases sd
+            WHERE (@DatabaseName IS NULL OR sd.secondary_database = @DatabaseName)
+            ORDER BY sd.secondary_database;
+
+        OPEN cur_gen_secondary_dbs;
+        FETCH NEXT FROM cur_gen_secondary_dbs INTO @gs_secondary_database;
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            SET @gs_primary_server = NULL; SET @gs_primary_database = NULL;
+
+            PRINT '-- Remove secondary database entry for ' + @gs_secondary_database + ' (deletes its history; if this is the last database on its log shipping link, it also auto-removes the copy/restore jobs)';
+            PRINT 'EXEC master.dbo.sp_delete_log_shipping_secondary_database @secondary_database = N''' + @gs_secondary_database + ''';';
+            PRINT '';
+
+            SELECT TOP (1) @gs_primary_server = s.primary_server, @gs_primary_database = s.primary_database
+            FROM msdb.dbo.log_shipping_secondary s
+            JOIN msdb.dbo.log_shipping_secondary_databases sd ON sd.secondary_id = s.secondary_id
+            WHERE sd.secondary_database = @gs_secondary_database;
+
+            IF @gs_primary_server IS NOT NULL
+            BEGIN
+                PRINT '-- OPTIONAL SAFETY NET: only needed if the line above did NOT already remove the copy/restore jobs';
+                PRINT '-- (per Microsoft''s docs, that auto-cascade only happens when no other secondary database shares this same link).';
+                PRINT '-- Safe to run either way - if the link is already gone this will just return a harmless error.';
+                PRINT 'EXEC master.dbo.sp_delete_log_shipping_secondary_primary @primary_server = N''' + @gs_primary_server + ''', @primary_database = N''' + @gs_primary_database + ''';';
+                PRINT '';
+            END
+
+            PRINT '-- OPTIONAL: ' + @gs_secondary_database + ' is currently a warm-standby copy (restoring / standby mode).';
+            PRINT '-- Removing log shipping above does NOT change that by itself. Only if you are certain no more log';
+            PRINT '-- backups will ever be applied, and you want this database usable on its own, you could run:';
+            PRINT '--   RESTORE DATABASE [' + @gs_secondary_database + '] WITH RECOVERY;';
+            PRINT '-- This is optional, irreversible (you cannot go back to restoring further log backups afterward),';
+            PRINT '-- and is your call - it is NOT required to remove log shipping and does NOT drop the database either way.';
+            PRINT '';
+
+            FETCH NEXT FROM cur_gen_secondary_dbs INTO @gs_secondary_database;
+        END
+        CLOSE cur_gen_secondary_dbs;
+        DEALLOCATE cur_gen_secondary_dbs;
+    END
+
+    PRINT '-- End of generated script. Nothing above was executed, and the user database itself was never touched by any of it.';
+END

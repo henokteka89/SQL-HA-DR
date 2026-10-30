@@ -1,0 +1,54 @@
+-- ============================================
+-- Log Shipping Monitoring Script
+-- ============================================
+
+-- 1. Monitor from Secondary: Check Restore Status & Latency
+PRINT '--- Secondary Server: Restore Status & Latency ---';
+SELECT 
+    secondary_server,
+    secondary_database,
+    last_restored_file,
+    last_restored_date,
+    DATEDIFF(MINUTE, last_restored_date, GETDATE()) AS MinutesBehind,
+    restore_threshold
+FROM msdb.dbo.log_shipping_monitor_secondary
+WHERE last_restored_date IS NOT NULL;
+
+-- 2. Monitor from Primary: Last Backup Info
+PRINT '--- Primary Server: Last Backup Info ---';
+SELECT 
+    primary_server,
+    primary_database,
+    last_backup_file,
+    last_backup_date,
+	 DATEDIFF(MINUTE, last_backup_date, GETDATE()) AS LastbackupMinutesAgo 
+FROM msdb.dbo.log_shipping_monitor_primary;
+
+-- 3. Job Status Summary (Requires Job Names)
+PRINT '--- SQL Agent Jobs: Backup, Copy, Restore ---';
+SELECT 
+    sj.name AS JobName,
+    sja.run_status,
+    sja.run_date,
+    sja.run_time,
+    sja.step_name,
+    sja.message
+FROM msdb.dbo.sysjobhistory sja
+JOIN msdb.dbo.sysjobs sj ON sja.job_id = sj.job_id
+WHERE sj.name LIKE 'LS%';  -- Only Log Shipping jobs
+
+-- 4. Optional Quick Alert Check for Restore Threshold Breach
+PRINT '--- Restore Latency Alert (If Behind Threshold) ---';
+SELECT 
+    secondary_server,
+    secondary_database,
+    last_restored_date,
+    DATEDIFF(MINUTE, last_restored_date, GETDATE()) AS MinutesBehind,
+    restore_threshold
+FROM msdb.dbo.log_shipping_monitor_secondary
+WHERE DATEDIFF(MINUTE, last_restored_date, GETDATE()) > restore_threshold * 1;
+
+-- ============================================
+-- End of Log Shipping Monitoring Script
+-- ============================================
+

@@ -1,0 +1,309 @@
+USE [Admin]
+GO
+/****** Object:  StoredProcedure [dbo].[AGLagAlert]    Script Date: 2/17/2025 7:34:38 PM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+/****** Object:  StoredProcedure [dbo].[AGLagAlert]    Script Date: 6/14/2018 9:19:54 AM ******/
+ALTER PROCEDURE [dbo].[AGLagAlert] (
+	@thresholdInSecondsSync INT = 900,---15min
+	@thresholdInSecondsAsync INT = 1800,---30min
+	@thresholdrqs BIGINT = 204800,---200MB
+	@thresholdrqspage BIGINT = 512000,---500MB
+	@thresholdlsqs BIGINT = 1048576,--1GB
+	@thresholdlsqsPage BIGINT = 2097152,--2GB
+    @EmailTo VARCHAR(200) = 'henxx@gmail.com', ------EmailWarning
+	--@EmailTo VARCHAR(200) = 'henxx@yahoo.com', ------EmailWarning
+	--@PageTo VARCHAR(200) = 'kabxx@gmail.com', 
+	@PageTo VARCHAR(200) = 'henxx@gmail.com', ----PagerPDCritical
+	@priority VARCHAR(6) = 'HIGH', -- use 'HIGH' for PROD
+	@emailTimeLimit INT = 15) -- this will assure we don't send too many pages/emails 
+AS
+BEGIN
+	SET NOCOUNT ON;
+	IF OBJECT_ID('tempdb..#ag') IS NOT NULL DROP TABLE #ag;
+	IF OBJECT_ID('tempdb..#alerts1') IS NOT NULL DROP TABLE #alerts1;
+	IF OBJECT_ID('tempdb..#alerts') IS NOT NULL DROP TABLE #alerts;
+
+	SELECT ag.[name] AGName,
+		drcs.[database_name] DBName,
+		ar.[replica_server_name] ReplicaInstanceName,
+		ar.[availability_mode_desc] AvailabilityMode,
+		ars.[role_desc] ReplicaRole,
+		drs.[last_received_time] LastReceivedTime, 
+		drs.[last_hardened_time] LastHardenedTime, 
+		drs.[log_send_queue_size] LogSendQueueSize, 
+		drs.[log_send_rate] LogSendRate, 
+		drs.[redo_queue_size] RedoQueueSize, 
+		drs.[redo_rate] RedoRate,
+		drs.[last_commit_time] LastCommitTime,
+		CAST(NULL AS INT) LagInSeconds
+	INTO #ag
+	FROM [master].[sys].[availability_groups] ag
+	INNER JOIN [master].[sys].[availability_replicas] ar ON ar.group_id = ag.group_id
+	INNER JOIN [master].[sys].[dm_hadr_availability_replica_states] ars ON ars.group_id = ag.group_id AND ars.replica_id = ar.replica_id
+	INNER JOIN [master].[sys].[dm_hadr_database_replica_cluster_states] drcs ON drcs.replica_id = ar.replica_id
+	INNER JOIN [master].[sys].[dm_hadr_database_replica_states] drs ON drs.group_id = ag.group_id AND drs.replica_id = ar.replica_id AND drs.group_database_id = drcs.group_database_id; 
+
+	WITH lag AS (
+		SELECT AGName, DBName, LastCommitTime
+		FROM #ag
+		WHERE ReplicaRole = 'PRIMARY')
+	UPDATE a
+	SET LagInSeconds = DATEDIFF(SECOND, a.LastCommitTime, lag.LastCommitTime)
+	FROM #ag a
+	INNER JOIN lag ON lag.AGName = a.AGName AND lag.DBName = a.DBName
+	WHERE a.LastCommitTime IS NOT NULL AND lag.LastCommitTime IS NOT NULL;
+
+	-- store for later use -let us keep for one month
+	DECLARE @DeleteDay datetime
+	SET	@DeleteDay = DATEADD(d,(-1)*30,getdate())
+	DELETE [Admin].[dbo].[AGLag] WHERE ReportTime < @DeleteDay
+	---select * from [Admin].[dbo].[AGLag] WHERE ReportTime < @DeleteDay
+
+	-- now only continue if this is the primary
+	IF EXISTS (SELECT 1 FROM #ag WHERE ReplicaInstanceName = @@SERVERNAME AND ReplicaRole = N'PRIMARY') BEGIN
+
+	INSERT INTO [dbo].[AGLag] (ReportTime, AGName, DBName, ReplicaInstanceName, AvailabilityMode, ReplicaRole, LastReceivedTime,LastHardenedTime,LogSendQueueSize,LogSendRate,RedoQueueSize,RedoRate,LastCommitTime, LagInSeconds)
+	SELECT SYSDATETIME(), AGName, DBName, ReplicaInstanceName, AvailabilityMode, ReplicaRole, LastReceivedTime,LastHardenedTime,LogSendQueueSize,LogSendRate,RedoQueueSize,RedoRate,LastCommitTime, LagInSeconds
+	FROM #ag;
+	
+	-- Get alert info that meets thresholds 
+		SELECT *
+		INTO #alerts1
+		FROM #ag
+		WHERE (AvailabilityMode = N'SYNCHRONOUS_COMMIT'	AND ISNULL(LagInSeconds,0) > @thresholdInSecondsSync 
+		AND (ISNULL(RedoQueueSize,0) > @thresholdrqs OR ISNULL(LogSendQueueSize,0) > @thresholdlsqs))
+			OR (AvailabilityMode = N'ASYNCHRONOUS_COMMIT' AND ISNULL(LagInSeconds,0) > @thresholdInSecondsAsync
+			AND (ISNULL(RedoQueueSize,0) > @thresholdrqs OR ISNULL(LogSendQueueSize,0) > @thresholdlsqs));
+
+		IF @@ROWCOUNT > 0 BEGIN
+
+		Select * 
+		INTO #alerts
+		From #alerts1
+		Union ALL
+		Select * FROM #ag
+		where ReplicaRole ='PRIMARY' and DBName in (select DBName from #alerts1)
+
+			-- make sure we didn't already meet this threshold in the past timeframe as indicated in @emailLimit
+			DECLARE @timeToCheck DATETIME2(4) = DATEADD(MINUTE, -1 * @emailTimeLimit, SYSDATETIME());
+
+			-- Keep only today's AlertTime for reference 
+			DECLARE @DeleteAlertime datetime
+			SET	@DeleteAlertime = DATEADD(d,(-1)*1,getdate())
+			--Select @DeleteAlertime
+			DELETE [Admin].[dbo].[AGLagAlertHistory] WHERE AlertTime < @DeleteAlertime
+
+			IF NOT EXISTS (SELECT AlertTime FROM dbo.AGLagAlertHistory WHERE AlertTime > @timeToCheck) BEGIN
+			
+			INSERT INTO dbo.AGLagAlertHistory (AlertTime) VALUES (SYSDATETIME());
+				
+
+				Declare @Emailsubject nvarchar(1000)
+				Declare @PageEmailsubject nvarchar(1000)
+				Declare @tableHTML nvarchar(max)  = ''
+				declare @tableHTMLPage nvarchar(max)  = ''
+				declare @tableHTMLEmailPage nvarchar(max)  = ''
+				Declare @SQLDBArunbook nvarchar(max)  
+				Declare @Emailtitel nvarchar(max)	
+					Declare @env_code  CHAR(3)	
+				IF @@SERVERNAME LIKE 'GZ%'
+				BEGIN
+				SET @env_code= SUBSTRING(CONVERT(varchar(100),SERVERPROPERTY('machinename')),10,3) ---- V1 (8,2) and V2 (10,2)
+	            END
+				ELSE 
+				BEGIN 
+				SET @env_code='PD1'
+				END
+						
+				--- set up alert format
+				--general title
+					set @Emailsubject =   'SQLQC Alert (Warning) '+@env_code+' - SQL Server Availability Group (AG Lag) with Last Commit Time Detected. Primary Replica: ' + ' '  + @@servername
+				set @PageEmailsubject ='SQLQC Alert (Critical) '+@env_code+' - SQL Server Availability Group (AG Lag) with Last Commit Time Detected. Primary Replica: ' + ' '  + @@servername
+				---Body Title
+				set @Emailtitel =N'<H3><FONT SIZE="2" FACE="Tahoma">'+'Availability Group (AG Lag) at ' + CONVERT(varchar(30), getdate(), 120) + ' </FONT></H3>'
+				--Direct to SQLDBA RUNBOOK
+				set @SQLDBArunbook =N'<H3><FONT SIZE="2" FACE="Tahoma"> '+'For possible actions, please refer SQLDBA RUNBOOK : https://runbook' + ' </FONT></H3>'
+
+				set @tableHTML = @Emailtitel+ N'<table border="1">' +
+						N'<FONT SIZE="2" FACE="Calibri">' +            
+						N'<tr><th align="center">AG Name</th>' +
+						N'<th align="center">DB Name</th>' +
+						N'<th align="center">Replica Instance</th>' +
+						N'<th align="center">Availability Mode</th>' +
+						N'<th align="center">Replica Role</th>' +
+						N'<th align="center">Last Received Time</th>' +
+						N'<th align="center">Last Hardened Time</th>' +
+						N'<th align="center">Log Send Queue Size (KB)</th>' +
+						N'<th align="center">Redo Queue Size (KB)</th>' +
+						N'<th align="center">Last Commit Time</th>' +
+						N'<th align="center">Lag in Seconds</th>' +
+						N'</tr>' +
+								ISNULL(CAST ( ( 
+											select td = '',
+												td = AGName,'',
+												td = DBName,'',
+												td = ReplicaInstanceName,'',
+												td = AvailabilityMode,'',
+												td = ReplicaRole,'',
+												td = Isnull(FORMAT(LastReceivedTime, N'yyyy-MM-dd HH:mm:ss'),''),'',
+												td = Isnull(FORMAT(LastHardenedTime, N'yyyy-MM-dd HH:mm:ss'),''),'',
+												td = Isnull(LogSendQueueSize,0),'',
+												td = Isnull(RedoQueueSize,0),'',
+												td = FORMAT(LastCommitTime, N'yyyy-MM-dd HH:mm:ss'),'',
+												td = LagInSeconds,''
+										from #alerts 
+										WHERE (AvailabilityMode = N'SYNCHRONOUS_COMMIT'	AND ISNULL(LagInSeconds,0) > @thresholdInSecondsSync 
+                                        AND ((ISNULL(RedoQueueSize,0) > @thresholdrqs AND ISNULL(RedoQueueSize,0) < @thresholdrqspage) 
+                                        OR (ISNULL(LogSendQueueSize,0) > @thresholdlsqs and ISNULL(LogSendQueueSize,0) < @thresholdlsqsPage)))
+	                                    OR (AvailabilityMode = N'ASYNCHRONOUS_COMMIT' AND ISNULL(LagInSeconds,0) > @thresholdInSecondsAsync
+	                                    AND ((ISNULL(RedoQueueSize,0) > @thresholdrqs AND ISNULL(RedoQueueSize,0) < @thresholdrqspage) 
+	                                    OR (ISNULL(LogSendQueueSize,0) > @thresholdlsqs AND ISNULL(LogSendQueueSize,0) < @thresholdlsqsPage)))
+										OR ReplicaRole ='PRIMARY'
+										order by DBName,ReplicaRole
+										FOR XML PATH('tr'), TYPE 
+								) AS NVARCHAR(MAX) ),'') +
+						N'</FONT>' +
+						N'</table>' +
+						@SQLDBArunbook;
+-----set up for pager
+			set @tableHTMLPage = @Emailtitel+ N'<table border="1">' +
+			N'<FONT SIZE="2" FACE="Calibri">' +            
+			N'<tr><th align="center">AG Name</th>' +
+			N'<th align="center">DB Name</th>' +
+			N'<th align="center">Replica Instance</th>' +
+			N'<th align="center">Availability Mode</th>' +
+			N'<th align="center">Replica Role</th>' +
+			N'<th align="center">Last Received Time</th>' +
+			N'<th align="center">Last Hardened Time</th>' +
+			N'<th align="center">Log Send Queue Size (KB)</th>' +
+			N'<th align="center">Redo Queue Size (KB)</th>' +
+			N'<th align="center">Last Commit Time</th>' +
+			N'<th align="center">Lag in Seconds</th>' +
+			N'</tr>' +
+					ISNULL(CAST ( ( 
+								select td = '',
+									td = AGName,'',
+									td = DBName,'',
+									td = ReplicaInstanceName,'',
+									td = AvailabilityMode,'',
+									td = ReplicaRole,'',
+									td = Isnull(FORMAT(LastReceivedTime, N'yyyy-MM-dd HH:mm:ss'),''),'',
+									td = Isnull(FORMAT(LastHardenedTime, N'yyyy-MM-dd HH:mm:ss'),''),'',
+									td = Isnull(LogSendQueueSize,0),'',
+									td = Isnull(RedoQueueSize,0),'',
+									td = FORMAT(LastCommitTime, N'yyyy-MM-dd HH:mm:ss'),'',
+									td = LagInSeconds,''
+							from #alerts
+							WHERE (AvailabilityMode = N'SYNCHRONOUS_COMMIT'	AND ISNULL(LagInSeconds,0) > @thresholdInSecondsSync 
+                                  AND (ISNULL(RedoQueueSize,0) > @thresholdrqspage OR ISNULL(LogSendQueueSize,0) > @thresholdlsqsPage))
+	                              OR (AvailabilityMode = N'ASYNCHRONOUS_COMMIT' AND ISNULL(LagInSeconds,0) > @thresholdInSecondsAsync
+	                              AND (ISNULL(RedoQueueSize,0) > @thresholdrqspage OR ISNULL(LogSendQueueSize,0) > @thresholdlsqsPage))
+								  OR ReplicaRole ='PRIMARY'
+							order by DBName,ReplicaRole
+							FOR XML PATH('tr'), TYPE 
+					) AS NVARCHAR(MAX) ),'') +
+			N'</FONT>' +
+			N'</table>' +
+			@SQLDBArunbook;
+--- If there s more than 1 DB, and one is critical and one warning, send as critical
+			set @tableHTMLEmailPage = @Emailtitel+ N'<table border="1">' +
+			N'<FONT SIZE="2" FACE="Calibri">' +            
+			N'<tr><th align="center">AG Name</th>' +
+			N'<th align="center">DB Name</th>' +
+			N'<th align="center">Replica Instance</th>' +
+			N'<th align="center">Availability Mode</th>' +
+			N'<th align="center">Replica Role</th>' +
+			N'<th align="center">Last Received Time</th>' +
+			N'<th align="center">Last Hardened Time</th>' +
+			N'<th align="center">Log Send Queue Size (KB)</th>' +
+			N'<th align="center">Redo Queue Size (KB)</th>' +
+			N'<th align="center">Last Commit Time</th>' +
+			N'<th align="center">Lag in Seconds</th>' +
+			N'</tr>' +
+					ISNULL(CAST ( ( 
+								select td = '',
+									td = AGName,'',
+									td = DBName,'',
+									td = ReplicaInstanceName,'',
+									td = AvailabilityMode,'',
+									td = ReplicaRole,'',
+									td = Isnull(FORMAT(LastReceivedTime, N'yyyy-MM-dd HH:mm:ss'),''),'',
+									td = Isnull(FORMAT(LastHardenedTime, N'yyyy-MM-dd HH:mm:ss'),''),'',
+									td = Isnull(LogSendQueueSize,0),'',
+									td = Isnull(RedoQueueSize,0),'',
+									td = FORMAT(LastCommitTime, N'yyyy-MM-dd HH:mm:ss'),'',
+									td = LagInSeconds,''
+							from #alerts
+							order by DBName,ReplicaRole
+							FOR XML PATH('tr'), TYPE 
+					) AS NVARCHAR(MAX) ),'') +
+			N'</FONT>' +
+			N'</table>' +
+			@SQLDBArunbook;
+
+-- Send Availability Group Lag (AG Lag) detection every 15 min
+IF EXISTS (SELECT 1 FROM #ag
+WHERE (AvailabilityMode = N'SYNCHRONOUS_COMMIT'	AND ISNULL(LagInSeconds,0) > @thresholdInSecondsSync 
+AND ((ISNULL(RedoQueueSize,0) > @thresholdrqs AND ISNULL(RedoQueueSize,0) < @thresholdrqspage) 
+OR (ISNULL(LogSendQueueSize,0) > @thresholdlsqs and ISNULL(LogSendQueueSize,0) < @thresholdlsqsPage)))
+	OR (AvailabilityMode = N'ASYNCHRONOUS_COMMIT' AND ISNULL(LagInSeconds,0) > @thresholdInSecondsAsync
+	AND ((ISNULL(RedoQueueSize,0) > @thresholdrqs AND ISNULL(RedoQueueSize,0) < @thresholdrqspage) 
+	OR (ISNULL(LogSendQueueSize,0) > @thresholdlsqs AND ISNULL(LogSendQueueSize,0) < @thresholdlsqsPage))))
+AND EXISTS (SELECT 1 FROM #ag
+WHERE (AvailabilityMode = N'SYNCHRONOUS_COMMIT'	AND ISNULL(LagInSeconds,0) > @thresholdInSecondsSync 
+AND (ISNULL(RedoQueueSize,0) > @thresholdrqspage OR ISNULL(LogSendQueueSize,0) > @thresholdlsqsPage))
+	OR (AvailabilityMode = N'ASYNCHRONOUS_COMMIT' AND ISNULL(LagInSeconds,0) > @thresholdInSecondsAsync
+	AND (ISNULL(RedoQueueSize,0) > @thresholdrqspage OR ISNULL(LogSendQueueSize,0) > @thresholdlsqsPage)))
+
+BEGIN
+EXEC msdb.dbo.Sp_send_dbmail @profile_name = 'HenokEmailProfile',
+									@body = @tableHTMLEmailPage,
+									@body_format = 'HTML',
+									@recipients   = @PageTo,
+									@subject      = @PageEmailsubject;
+								
+	EXEC xp_logevent 50001, @PageEmailsubject, 'Error';  
+
+END;
+ELSE 
+IF EXISTS (SELECT 1 FROM #ag
+WHERE (AvailabilityMode = N'SYNCHRONOUS_COMMIT'	AND ISNULL(LagInSeconds,0) > @thresholdInSecondsSync 
+AND ((ISNULL(RedoQueueSize,0) > @thresholdrqs AND ISNULL(RedoQueueSize,0) < @thresholdrqspage) 
+OR (ISNULL(LogSendQueueSize,0) > @thresholdlsqs and ISNULL(LogSendQueueSize,0) < @thresholdlsqsPage)))
+	OR (AvailabilityMode = N'ASYNCHRONOUS_COMMIT' AND ISNULL(LagInSeconds,0) > @thresholdInSecondsAsync
+	AND ((ISNULL(RedoQueueSize,0) > @thresholdrqs AND ISNULL(RedoQueueSize,0) < @thresholdrqspage) 
+	OR (ISNULL(LogSendQueueSize,0) > @thresholdlsqs AND ISNULL(LogSendQueueSize,0) < @thresholdlsqsPage))))
+BEGIN
+EXEC msdb.dbo.Sp_send_dbmail @profile_name = 'HenokEmailProfile',
+									@body = @tableHTML,
+									@body_format = 'HTML',
+									@recipients   = @EmailTo,
+									@subject      = @Emailsubject ;
+
+				EXEC xp_logevent 50001, @Emailsubject, 'Warning';  
+END;
+ELSE
+IF EXISTS (SELECT 1 FROM #ag
+WHERE (AvailabilityMode = N'SYNCHRONOUS_COMMIT'	AND ISNULL(LagInSeconds,0) > @thresholdInSecondsSync 
+AND (ISNULL(RedoQueueSize,0) > @thresholdrqspage OR ISNULL(LogSendQueueSize,0) > @thresholdlsqsPage))
+	OR (AvailabilityMode = N'ASYNCHRONOUS_COMMIT' AND ISNULL(LagInSeconds,0) > @thresholdInSecondsAsync
+	AND (ISNULL(RedoQueueSize,0) > @thresholdrqspage OR ISNULL(LogSendQueueSize,0) > @thresholdlsqsPage)))
+BEGIN
+EXEC msdb.dbo.Sp_send_dbmail @profile_name = 'myEmailProfile',
+									@body = @tableHTMLPage,
+									@body_format = 'HTML',
+									@recipients   = @PageTo,
+									@subject      = @PageEmailsubject;
+
+					
+				EXEC xp_logevent 50001, @PageEmailsubject, 'Error';  
+END;
+			END;				
+		END;
+	END;
+END;

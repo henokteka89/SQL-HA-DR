@@ -1,0 +1,9 @@
+Whatever server name you use for the subscriber, must match SELECT @@SERVERNAME.
+You can't use the FQDN and the port.  
+-- Luke's video and blog
+
+-- Blog post
+https://www.automatesql.com/blog/how-to-set-up-replication-using-sql-aliases
+
+-- Video
+https://www.youtube.com/watch?v=r7Ph15pr2cg
